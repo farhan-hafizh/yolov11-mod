@@ -68,6 +68,7 @@ from ultralytics.nn.modules import (
     YOLOEDetect,
     YOLOESegment,
     v10Detect,
+    CBAM,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS, LOGGER, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1700,6 +1701,12 @@ def parse_model(d, ch, verbose=True):
                     args.extend((True, 1.2))
             if m is C2fCIB:
                 legacy = False
+        elif m is CBAM:
+            # f is the index of the layer coming from, so ch[f] is its # of channels
+            c1 = ch[f]
+            # original args from YAML might be [kernel_size], so prepend c1
+            args = [c1, *args]    # CBAM(c1, kernel_size)
+            c2 = c1 # CBAM output channels are the same as input channels
         elif m is AIFI:
             args = [ch[f], *args]
         elif m in frozenset({HGStem, HGBlock}):

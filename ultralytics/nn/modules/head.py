@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.init import constant_, xavier_uniform_
+from torch.nn import MultiheadAttention
 
 from ultralytics.utils.tal import TORCH_1_10, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import fuse_conv_and_bn, smart_inference_mode
@@ -20,6 +21,15 @@ from .utils import bias_init_with_prob, linear_init
 
 __all__ = "Detect", "Segment", "Pose", "Classify", "OBB", "RTDETRDecoder", "v10Detect", "YOLOEDetect", "YOLOESegment"
 
+class LightHead(nn.Module):
+    def __init__(self, ch, num_heads=4):
+        super().__init__()
+        self.attn = MultiheadAttention(ch, num_heads, batch_first=True)
+    def forward(self, feat):
+        b, c, h, w = feat.shape
+        x = feat.view(b, c, -1).permute(0,2,1)            # (b, hw, c)
+        x, _ = self.attn(x, x, x)
+        return x.permute(0,2,1).view(b,c,h,w)
 
 class Detect(nn.Module):
     """
@@ -93,6 +103,7 @@ class Detect(nn.Module):
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
         )
+        self.light_head = LightHead(ch[0])
         self.cv3 = (
             nn.ModuleList(nn.Sequential(Conv(x, c3, 3), Conv(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)) for x in ch)
             if self.legacy
@@ -117,6 +128,7 @@ class Detect(nn.Module):
             return self.forward_end2end(x)
 
         for i in range(self.nl):
+            x[i] = self.light_head(x[i])
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
         if self.training:  # Training path
             return x
@@ -139,6 +151,7 @@ class Detect(nn.Module):
             torch.cat((self.one2one_cv2[i](x_detach[i]), self.one2one_cv3[i](x_detach[i])), 1) for i in range(self.nl)
         ]
         for i in range(self.nl):
+            x[i] = self.light_head(x[i])
             x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
         if self.training:  # Training path
             return {"one2many": x, "one2one": one2one}

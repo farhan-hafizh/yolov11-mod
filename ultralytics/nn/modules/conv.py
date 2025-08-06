@@ -585,7 +585,7 @@ class ChannelAttention(nn.Module):
         """
         avg_out = self.mlp(self.avg_pool(x))
         max_out = self.mlp(self.max_pool(x))
-        return x * self.sigmoid(avg_out + max_out)
+        return x * self.act(avg_out + max_out)
 
 
 class SpatialAttention(nn.Module):

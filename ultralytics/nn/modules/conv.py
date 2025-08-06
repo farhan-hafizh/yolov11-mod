@@ -553,7 +553,7 @@ class ChannelAttention(nn.Module):
         https://github.com/open-mmlab/mmdetection/tree/v3.0.0rc1/configs/rtmdet
     """
 
-    def __init__(self, channels: int) -> None:
+    def __init__(self, channels: int, reduction: int = 16) -> None:
         """
         Initialize Channel-attention module.
 
@@ -562,7 +562,15 @@ class ChannelAttention(nn.Module):
         """
         super().__init__()
         self.pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Conv2d(channels, channels, 1, 1, 0, bias=True)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        mlp_channels = channels // reduction
+        self.mlp = nn.Sequential(
+            nn.Conv2d(channels, mlp_channels, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mlp_channels, channels, 1, bias=False),
+        )
+
         self.act = nn.Sigmoid()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -575,7 +583,9 @@ class ChannelAttention(nn.Module):
         Returns:
             (torch.Tensor): Channel-attended output tensor.
         """
-        return x * self.act(self.fc(self.pool(x)))
+        avg_out = self.mlp(self.avg_pool(x))
+        max_out = self.mlp(self.max_pool(x))
+        return x * self.sigmoid(avg_out + max_out)
 
 
 class SpatialAttention(nn.Module):
@@ -612,7 +622,10 @@ class SpatialAttention(nn.Module):
         Returns:
             (torch.Tensor): Spatial-attended output tensor.
         """
-        return x * self.act(self.cv1(torch.cat([torch.mean(x, 1, keepdim=True), torch.max(x, 1, keepdim=True)[0]], 1)))
+        avg = torch.mean(x, 1, keepdim=True)
+        mx = torch.max(x, 1, keepdim=True)[0]
+        attn = self.cv1(torch.cat([avg, mx], 1))
+        return x * self.act(attn)
 
 
 class CBAM(nn.Module):
@@ -626,7 +639,7 @@ class CBAM(nn.Module):
         spatial_attention (SpatialAttention): Spatial attention module.
     """
 
-    def __init__(self, c1, kernel_size=7):
+    def __init__(self, c1, kernel_size: int = 7, reduction: int = 16):
         """
         Initialize CBAM with given parameters.
 
@@ -635,7 +648,7 @@ class CBAM(nn.Module):
             kernel_size (int): Size of the convolutional kernel for spatial attention.
         """
         super().__init__()
-        self.channel_attention = ChannelAttention(c1)
+        self.channel_attention = ChannelAttention(c1, reduction)
         self.spatial_attention = SpatialAttention(kernel_size)
 
     def forward(self, x):
